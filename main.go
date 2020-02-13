@@ -1,43 +1,28 @@
 package main
 
 import (
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
-	"net/url"
 	"os"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/axgle/mahonia"
 	"github.com/chromedp/chromedp"
 )
 
 const (
-	//JDStockStateAPI url
-	JDStockStateAPI = "https://c0.3.cn/stocks"
-	//ShangHai
-	areaID = "2_2834_51988_0"
 	//BarkNoticeAPI 自己的barkApi链接，Appstore下载Bark得到
 	BarkNoticeAPI = "https://api.day.app/"
 	//TaskTimeout chrome 作务超时时间，秒
 	TaskTimeout = 10
 )
-
-type stockStateStruct struct {
-	Name  string `json:"StockStateName"`
-	State int    `json:"StockState"`
-}
 
 type shopInfo struct {
 	Name     string
@@ -57,6 +42,19 @@ func init() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
+func noticeByBark(URL string) {
+	noticeURL := BarkNoticeAPI + *barkToken + "/KouZhao?url=" + URL
+	req, _ := http.NewRequest("GET", noticeURL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	log.Println(string(body))
+}
+
 //工作线程，Chromedp的多次run如果共用一个Context,是可以在一个进程上反复fetch，否则一次run就要重启一个进程，效率虽低，但是可以解决timeout问题，也避免因频率太高，被Ban
 func run(timeout int, taskChan chan map[string]string) {
 	//ctx, cancel := chromedp.NewContext(context.Background())
@@ -70,11 +68,21 @@ func run(timeout int, taskChan chan map[string]string) {
 		//超时结束Chromedp进程，官方文档没找到timeout相关操作
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 		defer cancel()
-		ctx, cancel = chromedp.NewContext(ctx)
-		defer cancel()
 
-		go checkStock(ctx, taskInfo, taskCompleted)
-		//go checkJDStockByAPI(url, areaID, chrun)
+		switch taskInfo["Name"] {
+		case "yanxuan":
+			go checkYanXuanStockByAPI(ctx, taskInfo["URL"], taskCompleted)
+		case "jd":
+			go checkJDStockByAPI(ctx, taskInfo["URL"], taskCompleted)
+		case "suning":
+			go checkSuningStockByAPI(ctx, taskInfo["URL"], taskCompleted)
+		default:
+			ctx, cancel = chromedp.NewContext(ctx)
+			defer cancel()
+			go checkStock(ctx, taskInfo, taskCompleted)
+
+		}
+
 		select {
 		case <-taskCompleted:
 		//case <-time.After(time.Duration(timeout) * time.Second):
@@ -82,63 +90,6 @@ func run(timeout int, taskChan chan map[string]string) {
 			log.Println(taskInfo["goid"], "timeout:", taskInfo["URL"])
 			//cancel()
 		}
-	}
-}
-
-//通过平台API查询库存
-func checkJDStockByAPI(URL string, areaID string, ch chan bool) {
-	defer func() { ch <- true }()
-
-	var (
-		err  error
-		req  *http.Request
-		resp *http.Response
-	)
-	flysnowRegexp := regexp.MustCompile(`^https://item.jd.com/(\d+).html`)
-	params := flysnowRegexp.FindStringSubmatch(URL)
-
-	u, _ := url.Parse(JDStockStateAPI)
-	q := u.Query()
-	q.Set("type", "getstocks")
-	q.Set("skuIds", params[1])
-	q.Set("area", areaID)
-	q.Set("_", strconv.FormatInt(time.Now().Unix()*1000, 10))
-
-	u.RawQuery = q.Encode()
-	queryURL := u.String()
-	fmt.Println(queryURL)
-
-	if req, err = http.NewRequest(`GET`, queryURL, nil); err != nil {
-		log.Println(err)
-		return
-	}
-
-	if resp, err = http.DefaultClient.Do(req); err != nil {
-		log.Println(err)
-		return
-	}
-
-	defer resp.Body.Close()
-	var reader io.Reader
-
-	switch resp.Header.Get("Content-Encoding") {
-	case "gzip":
-		reader, _ = gzip.NewReader(resp.Body)
-	default:
-		reader = resp.Body
-	}
-
-	returnStr, _ := ioutil.ReadAll(reader)
-	dec := mahonia.NewDecoder("gbk")
-	decString := dec.ConvertString(string(returnStr))
-	var dat map[string]stockStateStruct
-	if err := json.Unmarshal([]byte(decString), &dat); err != nil {
-		log.Println("转换JSON失败")
-		return
-	}
-
-	for _, val := range dat {
-		log.Println(val.Name)
 	}
 }
 
@@ -235,6 +186,8 @@ func main() {
 		go run(TaskTimeout, c)
 	}
 
+	shopConfig = shopConfig[0:3]
+	//fmt.Println(shopConfig)
 	for true {
 		for skey, val := range shopConfig {
 			for ukey, url := range val.Urls {
@@ -245,6 +198,7 @@ func main() {
 					"Selector": val.Selector,
 					"URL":      url,
 					"goid":     goid,
+					"Name":     val.Name,
 				}
 				c <- taskInfo
 			}

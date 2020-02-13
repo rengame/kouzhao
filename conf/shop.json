@@ -5,7 +5,8 @@
 		"Selector":".m-info",
 		"Urls":[
 			"https://you.163.com/item/detail?id=3988740",
-			"https://you.163.com/item/detail?id=3401036"
+			"https://you.163.com/item/detail?id=3401036",
+			"https://you.163.com/item/detail?id=3988533"
 		]
 	},{
 	"Name":"jd",
@@ -124,7 +125,7 @@
 		]
 	},
 	{
-		"Name":"sn",
+		"Name":"suning",
 		"Keywords":["已下架","无货"],
 		"Selector":".cartbuy,#buyNow",
 		"Urls":[
